@@ -5,8 +5,8 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("OpenNpcRaiders", "FreshX", "0.3.0")]
-    [Description("Open-source hybrid NPC raiders with daily random base raids")]
+    [Info("OpenNpcRaiders", "FreshX", "0.4.0")]
+    [Description("Manual hybrid NPC raiders with difficulty levels")]
     public class OpenNpcRaiders : RustPlugin
     {
         #region Config
@@ -15,29 +15,34 @@ namespace Oxide.Plugins
 
         private class ConfigData
         {
-            public RaidSettings Raid = new RaidSettings();
             public DamageSettings Damage = new DamageSettings();
-        }
-
-        private class RaidSettings
-        {
-            public int MinNPCs = 3;
-            public int MaxNPCs = 6;
-            public float SpawnDistance = 50f;
-            public float DespawnTime = 420f;
-
-            public bool AllowOfflineRaids = true;
-            public float OfflineRaidChance = 0.5f;
-
-            public bool UseRockets = true;
-
-            public float RaidIntervalSeconds = 86400f; // 1 day
+            public RaidSettings Raid = new RaidSettings();
         }
 
         private class DamageSettings
         {
             public bool DamagePlayers = true;
             public bool DamageBuildings = true;
+        }
+
+        private class RaidSettings
+        {
+            public int MinNPCsEasy = 2;
+            public int MaxNPCsEasy = 3;
+            public int MinNPCsNormal = 3;
+            public int MaxNPCsNormal = 6;
+            public int MinNPCsHard = 5;
+            public int MaxNPCsHard = 8;
+
+            public float SpawnDistance = 50f;
+            public float DespawnTime = 420f;
+
+            public bool AllowOfflineRaids = true;
+            public float OfflineRaidChance = 0.5f;
+
+            public bool EasyRockets = false;
+            public bool NormalRockets = true;
+            public bool HardRockets = true;
         }
 
         protected override void LoadDefaultConfig()
@@ -56,28 +61,25 @@ namespace Oxide.Plugins
 
         #endregion
 
-        #region Hooks
+        #region Admin Command
 
-        private void OnServerInitialized()
+        [ChatCommand("npcrraid")]
+        private void CmdRaid(BasePlayer player, string cmd, string[] args)
         {
-            timer.Every(config.Raid.RaidIntervalSeconds, () =>
+            if (!player.IsAdmin)
             {
-                TryStartRandomRaid();
-            });
+                SendReply(player, "You are not allowed to use this command.");
+                return;
+            }
 
-            Puts($"Daily raid timer started ({config.Raid.RaidIntervalSeconds} seconds).");
-        }
+            string difficulty = "normal";
+            if (args.Length > 0)
+                difficulty = args[0].ToLower();
 
-        #endregion
-
-        #region Raid Logic
-
-        private void TryStartRandomRaid()
-        {
             var tc = GetRandomToolCupboard();
             if (tc == null)
             {
-                Puts("No valid bases found for raid.");
+                SendReply(player, "No valid bases found for a raid.");
                 return;
             }
 
@@ -86,27 +88,51 @@ namespace Oxide.Plugins
             if (owner == null || !owner.IsConnected)
             {
                 if (!config.Raid.AllowOfflineRaids)
+                {
+                    SendReply(player, "Target is offline and offline raids are disabled.");
                     return;
+                }
 
                 if (UnityEngine.Random.value > config.Raid.OfflineRaidChance)
+                {
+                    SendReply(player, "Raid skipped due to offline chance.");
                     return;
+                }
             }
 
             Vector3 targetPos = tc.transform.position;
-            StartRaidAtPosition(targetPos);
-
-            Puts($"NPC raid started on base owned by {tc.OwnerID}");
+            StartRaidAtPosition(targetPos, difficulty);
+            SendReply(player, $"NPC raid started on base owned by {tc.OwnerID} with difficulty {difficulty}.");
         }
 
-        private void StartRaidAtPosition(Vector3 targetPos)
-        {
-            int count = UnityEngine.Random.Range(
-                config.Raid.MinNPCs,
-                config.Raid.MaxNPCs + 1
-            );
+        #endregion
 
-            for (int i = 0; i < count; i++)
-                SpawnRaider(GetSpawnPos(targetPos), targetPos);
+        #region Raid Logic
+
+        private void StartRaidAtPosition(Vector3 targetPos, string difficulty)
+        {
+            int minNPC = config.Raid.MinNPCsNormal;
+            int maxNPC = config.Raid.MaxNPCsNormal;
+            bool rockets = config.Raid.NormalRockets;
+
+            switch (difficulty)
+            {
+                case "easy":
+                    minNPC = config.Raid.MinNPCsEasy;
+                    maxNPC = config.Raid.MaxNPCsEasy;
+                    rockets = config.Raid.EasyRockets;
+                    break;
+                case "hard":
+                    minNPC = config.Raid.MinNPCsHard;
+                    maxNPC = config.Raid.MaxNPCsHard;
+                    rockets = config.Raid.HardRockets;
+                    break;
+            }
+
+            int npcCount = UnityEngine.Random.Range(minNPC, maxNPC + 1);
+
+            for (int i = 0; i < npcCount; i++)
+                SpawnRaider(GetSpawnPos(targetPos), targetPos, rockets);
         }
 
         private Vector3 GetSpawnPos(Vector3 target)
@@ -116,7 +142,7 @@ namespace Oxide.Plugins
             return pos;
         }
 
-        private void SpawnRaider(Vector3 pos, Vector3 targetPos)
+        private void SpawnRaider(Vector3 pos, Vector3 targetPos, bool rockets)
         {
             var npc = GameManager.server.CreateEntity(
                 "assets/rust.ai/agents/npcplayerapex/npcplayerapex.prefab",
@@ -129,7 +155,7 @@ namespace Oxide.Plugins
             npc.displayName = "Raider";
 
             npc.inventory.Strip();
-            GiveLoadout(npc);
+            GiveLoadout(npc, rockets);
 
             npc.SetFact(BaseNPC.Facts.IsAggro, 1);
             npc.SetDestination(targetPos);
@@ -165,7 +191,7 @@ namespace Oxide.Plugins
 
         #region Loadout
 
-        private void GiveLoadout(NPCPlayerApex npc)
+        private void GiveLoadout(NPCPlayerApex npc, bool rockets)
         {
             npc.inventory.GiveItem(
                 ItemManager.CreateByName("rifle.ak", 1),
@@ -177,7 +203,7 @@ namespace Oxide.Plugins
                 npc.inventory.containerMain
             );
 
-            if (config.Raid.UseRockets)
+            if (rockets)
             {
                 npc.inventory.GiveItem(
                     ItemManager.CreateByName("rocket.launcher", 1),
@@ -206,19 +232,6 @@ namespace Oxide.Plugins
                     return true;
             }
             return null;
-        }
-
-        #endregion
-
-        #region Admin Command (Manual)
-
-        [ChatCommand("npcrraid")]
-        private void CmdRaid(BasePlayer player, string cmd, string[] args)
-        {
-            if (!player.IsAdmin) return;
-
-            TryStartRandomRaid();
-            SendReply(player, "Random NPC raid triggered.");
         }
 
         #endregion
