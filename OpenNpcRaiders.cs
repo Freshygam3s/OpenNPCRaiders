@@ -2,11 +2,15 @@ using System;
 using System.Collections.Generic;
 using Oxide.Core;
 using UnityEngine;
+using Rust;
+using Rust.Ai;
+using BasePlayer = global::BasePlayer;
+using BaseCombatEntity = global::BaseCombatEntity;
 
 namespace Oxide.Plugins
 {
-    [Info("OpenNpcRaiders", "FreshX", "0.4.0")]
-    [Description("Manual hybrid NPC raiders with difficulty levels")]
+    [Info("OpenNpcRaiders", "YourName", "0.5.0")]
+    [Description("Manual hybrid NPC raiders with difficulty levels, updated for latest Rust")]
     public class OpenNpcRaiders : RustPlugin
     {
         #region Config
@@ -147,7 +151,7 @@ namespace Oxide.Plugins
             var npc = GameManager.server.CreateEntity(
                 "assets/rust.ai/agents/npcplayerapex/npcplayerapex.prefab",
                 pos
-            ) as NPCPlayerApex;
+            ) as NPCPlayer;
 
             if (npc == null) return;
 
@@ -191,7 +195,7 @@ namespace Oxide.Plugins
 
         #region Loadout
 
-        private void GiveLoadout(NPCPlayerApex npc, bool rockets)
+        private void GiveLoadout(NPCPlayer npc, bool rockets)
         {
             npc.inventory.GiveItem(
                 ItemManager.CreateByName("rifle.ak", 1),
@@ -223,7 +227,7 @@ namespace Oxide.Plugins
 
         object OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
         {
-            if (info?.Initiator is NPCPlayerApex)
+            if (info?.Initiator is NPCPlayer)
             {
                 if (entity is BasePlayer && !config.Damage.DamagePlayers)
                     return true;
