@@ -1,19 +1,16 @@
 using System;
 using System.Collections.Generic;
-using Oxide.Core;
 using UnityEngine;
+using Oxide.Core;
 using Rust;
-using Rust.Ai;
-using BasePlayer = global::BasePlayer;
-using BaseCombatEntity = global::BaseCombatEntity;
 
 namespace Oxide.Plugins
 {
-    [Info("OpenNpcRaiders", "YourName", "0.5.0")]
-    [Description("Manual hybrid NPC raiders with difficulty levels, updated for latest Rust")]
+    [Info("OpenNpcRaiders", "YourName", "1.0.3")]
+    [Description("Manual NPC raiders with difficulty levels (Oxide-safe)")]
     public class OpenNpcRaiders : RustPlugin
     {
-        #region Config
+        #region Configuration
 
         private ConfigData config;
 
@@ -31,17 +28,17 @@ namespace Oxide.Plugins
 
         private class RaidSettings
         {
-            public int MinNPCsEasy = 2;
-            public int MaxNPCsEasy = 3;
-            public int MinNPCsNormal = 3;
-            public int MaxNPCsNormal = 6;
-            public int MinNPCsHard = 5;
-            public int MaxNPCsHard = 8;
+            public int MinEasy = 2;
+            public int MaxEasy = 3;
+            public int MinNormal = 3;
+            public int MaxNormal = 6;
+            public int MinHard = 5;
+            public int MaxHard = 8;
 
-            public float SpawnDistance = 50f;
+            public float SpawnRadius = 45f;
             public float DespawnTime = 420f;
 
-            public bool AllowOfflineRaids = true;
+            public bool AllowOfflineRaids = false;
             public float OfflineRaidChance = 0.5f;
 
             public bool EasyRockets = false;
@@ -61,14 +58,17 @@ namespace Oxide.Plugins
             config = Config.ReadObject<ConfigData>();
         }
 
-        protected override void SaveConfig() => Config.WriteObject(config);
+        protected override void SaveConfig()
+        {
+            Config.WriteObject(config);
+        }
 
         #endregion
 
-        #region Admin Command
+        #region Command
 
         [ChatCommand("npcrraid")]
-        private void CmdRaid(BasePlayer player, string cmd, string[] args)
+        private void CmdNpcRaid(BasePlayer player, string command, string[] args)
         {
             if (!player.IsAdmin)
             {
@@ -76,93 +76,98 @@ namespace Oxide.Plugins
                 return;
             }
 
-            string difficulty = "normal";
-            if (args.Length > 0)
-                difficulty = args[0].ToLower();
+            string difficulty = args.Length > 0 ? args[0].ToLower() : "normal";
 
-            var tc = GetRandomToolCupboard();
+            BuildingPrivlidge tc = GetRandomToolCupboard();
             if (tc == null)
             {
-                SendReply(player, "No valid bases found for a raid.");
+                SendReply(player, "No valid tool cupboards found.");
                 return;
             }
 
             BasePlayer owner = BasePlayer.FindByID(tc.OwnerID);
-
-            if (owner == null || !owner.IsConnected)
+            if ((owner == null || !owner.IsConnected) && !CheckOfflineRaid())
             {
-                if (!config.Raid.AllowOfflineRaids)
-                {
-                    SendReply(player, "Target is offline and offline raids are disabled.");
-                    return;
-                }
-
-                if (UnityEngine.Random.value > config.Raid.OfflineRaidChance)
-                {
-                    SendReply(player, "Raid skipped due to offline chance.");
-                    return;
-                }
+                SendReply(player, "Offline raid was blocked.");
+                return;
             }
 
-            Vector3 targetPos = tc.transform.position;
-            StartRaidAtPosition(targetPos, difficulty);
-            SendReply(player, $"NPC raid started on base owned by {tc.OwnerID} with difficulty {difficulty}.");
+            StartRaid(tc.transform.position, difficulty);
+            SendReply(player, $"NPC raid started ({difficulty}) on TC owned by {tc.OwnerID}");
+        }
+
+        private bool CheckOfflineRaid()
+        {
+            return config.Raid.AllowOfflineRaids &&
+                   UnityEngine.Random.value <= config.Raid.OfflineRaidChance;
         }
 
         #endregion
 
         #region Raid Logic
 
-        private void StartRaidAtPosition(Vector3 targetPos, string difficulty)
+        private void StartRaid(Vector3 targetPos, string difficulty)
         {
-            int minNPC = config.Raid.MinNPCsNormal;
-            int maxNPC = config.Raid.MaxNPCsNormal;
-            bool rockets = config.Raid.NormalRockets;
+            int min, max;
+            bool rockets;
 
             switch (difficulty)
             {
                 case "easy":
-                    minNPC = config.Raid.MinNPCsEasy;
-                    maxNPC = config.Raid.MaxNPCsEasy;
+                    min = config.Raid.MinEasy;
+                    max = config.Raid.MaxEasy;
                     rockets = config.Raid.EasyRockets;
                     break;
+
                 case "hard":
-                    minNPC = config.Raid.MinNPCsHard;
-                    maxNPC = config.Raid.MaxNPCsHard;
+                    min = config.Raid.MinHard;
+                    max = config.Raid.MaxHard;
                     rockets = config.Raid.HardRockets;
+                    break;
+
+                default:
+                    min = config.Raid.MinNormal;
+                    max = config.Raid.MaxNormal;
+                    rockets = config.Raid.NormalRockets;
                     break;
             }
 
-            int npcCount = UnityEngine.Random.Range(minNPC, maxNPC + 1);
+            int count = UnityEngine.Random.Range(min, max + 1);
 
-            for (int i = 0; i < npcCount; i++)
-                SpawnRaider(GetSpawnPos(targetPos), targetPos, rockets);
+            for (int i = 0; i < count; i++)
+                SpawnRaider(GetSpawnPoint(targetPos), rockets);
         }
 
-        private Vector3 GetSpawnPos(Vector3 target)
+        private Vector3 GetSpawnPoint(Vector3 target)
         {
-            Vector3 pos = target + UnityEngine.Random.onUnitSphere * config.Raid.SpawnDistance;
+            Vector3 pos = target + UnityEngine.Random.insideUnitSphere * config.Raid.SpawnRadius;
             pos.y = TerrainMeta.HeightMap.GetHeight(pos);
             return pos;
         }
 
-        private void SpawnRaider(Vector3 pos, Vector3 targetPos, bool rockets)
+        private void SpawnRaider(Vector3 spawnPos, bool rockets)
         {
-            var npc = GameManager.server.CreateEntity(
+            BaseEntity entity = GameManager.server.CreateEntity(
                 "assets/rust.ai/agents/npcplayerapex/npcplayerapex.prefab",
-                pos
-            ) as NPCPlayer;
+                spawnPos
+            );
 
-            if (npc == null) return;
+            if (entity == null)
+                return;
 
-            npc.Spawn();
+            entity.Spawn();
+
+            BasePlayer npc = entity as BasePlayer;
+            if (npc == null)
+            {
+                entity.Kill();
+                return;
+            }
+
             npc.displayName = "Raider";
+            npc.InitializeHealth(250f, 250f);
 
-            npc.inventory.Strip();
-            GiveLoadout(npc, rockets);
-
-            npc.SetFact(BaseNPC.Facts.IsAggro, 1);
-            npc.SetDestination(targetPos);
+            SetupInventory(npc, rockets);
 
             timer.Once(config.Raid.DespawnTime, () =>
             {
@@ -173,13 +178,48 @@ namespace Oxide.Plugins
 
         #endregion
 
-        #region Tool Cupboard Logic
+        #region Inventory
+
+        private void SetupInventory(BasePlayer npc, bool rockets)
+        {
+            npc.inventory.Strip();
+
+            npc.inventory.GiveItem(
+                ItemManager.CreateByName("rifle.ak", 1),
+                npc.inventory.containerBelt
+            );
+
+            npc.inventory.GiveItem(
+                ItemManager.CreateByName("ammo.rifle", 256),
+                npc.inventory.containerMain
+            );
+
+            if (rockets)
+            {
+                npc.inventory.GiveItem(
+                    ItemManager.CreateByName("rocket.launcher", 1),
+                    npc.inventory.containerBelt
+                );
+
+                npc.inventory.GiveItem(
+                    ItemManager.CreateByName("ammo.rocket.basic", 6),
+                    npc.inventory.containerMain
+                );
+            }
+
+            if (npc.inventory.containerBelt.itemList.Count > 0)
+                npc.UpdateActiveItem(npc.inventory.containerBelt.itemList[0].uid);
+        }
+
+        #endregion
+
+        #region Tool Cupboard
 
         private BuildingPrivlidge GetRandomToolCupboard()
         {
-            var tcs = new List<BuildingPrivlidge>();
+            List<BuildingPrivlidge> tcs = new List<BuildingPrivlidge>();
 
-            foreach (var entity in BaseNetworkable.serverEntities)
+            foreach (BaseNetworkable entity in BaseNetworkable.serverEntities)
             {
                 if (entity is BuildingPrivlidge tc && tc.OwnerID != 0)
                     tcs.Add(tc);
@@ -193,41 +233,12 @@ namespace Oxide.Plugins
 
         #endregion
 
-        #region Loadout
-
-        private void GiveLoadout(NPCPlayer npc, bool rockets)
-        {
-            npc.inventory.GiveItem(
-                ItemManager.CreateByName("rifle.ak", 1),
-                npc.inventory.containerBelt
-            );
-
-            npc.inventory.GiveItem(
-                ItemManager.CreateByName("ammo.rifle", 200),
-                npc.inventory.containerMain
-            );
-
-            if (rockets)
-            {
-                npc.inventory.GiveItem(
-                    ItemManager.CreateByName("rocket.launcher", 1),
-                    npc.inventory.containerBelt
-                );
-
-                npc.inventory.GiveItem(
-                    ItemManager.CreateByName("ammo.rocket.basic", 3),
-                    npc.inventory.containerMain
-                );
-            }
-        }
-
-        #endregion
-
         #region Damage Control
 
         object OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
         {
-            if (info?.Initiator is NPCPlayer)
+            BasePlayer attacker = info?.Initiator as BasePlayer;
+            if (attacker != null && attacker.IsNpc)
             {
                 if (entity is BasePlayer && !config.Damage.DamagePlayers)
                     return true;
@@ -235,6 +246,7 @@ namespace Oxide.Plugins
                 if (entity is BuildingBlock && !config.Damage.DamageBuildings)
                     return true;
             }
+
             return null;
         }
 
