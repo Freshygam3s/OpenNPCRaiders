@@ -6,8 +6,8 @@ using Rust;
 
 namespace Oxide.Plugins
 {
-    [Info("OpenNpcRaiders", "YourName", "1.0.3")]
-    [Description("Manual NPC raiders with difficulty levels (Oxide-safe)")]
+    [Info("OpenNpcRaiders", "FreshX", "1.0.5")]
+    [Description("Manual NPC raiders with native AI targeting")]
     public class OpenNpcRaiders : RustPlugin
     {
         #region Configuration
@@ -85,18 +85,23 @@ namespace Oxide.Plugins
                 return;
             }
 
-            bool ownerOnline = BasePlayer.activePlayerList
-                .Exists(p => p.userID == tc.OwnerID);
-
-            if (!ownerOnline && !CheckOfflineRaid())
+            if (!IsOwnerOnline(tc.OwnerID) && !CheckOfflineRaid())
             {
                 SendReply(player, "Offline raid was blocked.");
                 return;
             }
 
-
             StartRaid(tc.transform.position, difficulty);
             SendReply(player, $"NPC raid started ({difficulty}) on TC owned by {tc.OwnerID}");
+        }
+
+        private bool IsOwnerOnline(ulong ownerID)
+        {
+            foreach (BasePlayer p in BasePlayer.activePlayerList)
+            {
+                if (p.userID == ownerID) return true;
+            }
+            return false;
         }
 
         private bool CheckOfflineRaid()
@@ -121,13 +126,11 @@ namespace Oxide.Plugins
                     max = config.Raid.MaxEasy;
                     rockets = config.Raid.EasyRockets;
                     break;
-
                 case "hard":
                     min = config.Raid.MinHard;
                     max = config.Raid.MaxHard;
                     rockets = config.Raid.HardRockets;
                     break;
-
                 default:
                     min = config.Raid.MinNormal;
                     max = config.Raid.MaxNormal;
@@ -138,7 +141,7 @@ namespace Oxide.Plugins
             int count = UnityEngine.Random.Range(min, max + 1);
 
             for (int i = 0; i < count; i++)
-                SpawnRaider(GetSpawnPoint(targetPos), rockets);
+                SpawnRaider(GetSpawnPoint(targetPos), rockets, targetPos);
         }
 
         private Vector3 GetSpawnPoint(Vector3 target)
@@ -148,20 +151,17 @@ namespace Oxide.Plugins
             return pos;
         }
 
-
-        private void SpawnRaider(Vector3 spawnPos, bool rockets)
+        private void SpawnRaider(Vector3 spawnPos, bool rockets, Vector3 tcPos)
         {
             BaseEntity entity = GameManager.server.CreateEntity(
                 "assets/rust.ai/agents/npcplayerapex/npcplayerapex.prefab",
                 spawnPos
             );
 
-            if (entity == null)
-                return;
+            if (entity == null) return;
 
-            entity.Spawn();
-
-            BasePlayer npc = entity as BasePlayer;
+            // Cast as NPCPlayerApex to access specialized AI methods
+            NPCPlayerApex npc = entity as NPCPlayerApex;
             if (npc == null)
             {
                 entity.Kill();
@@ -170,20 +170,19 @@ namespace Oxide.Plugins
 
             npc.displayName = "Raider";
             npc.InitializeHealth(250f, 250f);
-
-            npc.EnablePlayerCollider(true);   // important
-            npc.StartThinking();              // CRITICAL
+            npc.Spawn();
 
             SetupInventory(npc, rockets);
-
+            
+            // Native AI: Set destination to the TC position
+            npc.SetHomePos(tcPos);
+            
             timer.Once(config.Raid.DespawnTime, () =>
             {
                 if (npc != null && !npc.IsDestroyed)
                     npc.Kill();
             });
         }
-
-
 
         #endregion
 
@@ -234,8 +233,7 @@ namespace Oxide.Plugins
                     tcs.Add(tc);
             }
 
-            if (tcs.Count == 0)
-                return null;
+            if (tcs.Count == 0) return null;
 
             return tcs[UnityEngine.Random.Range(0, tcs.Count)];
         }
@@ -247,7 +245,7 @@ namespace Oxide.Plugins
         object OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
         {
             BasePlayer attacker = info?.Initiator as BasePlayer;
-            if (attacker != null && attacker.IsNpc)
+            if (attacker != null && attacker.IsNpc && attacker.displayName == "Raider")
             {
                 if (entity is BasePlayer && !config.Damage.DamagePlayers)
                     return true;
@@ -257,6 +255,21 @@ namespace Oxide.Plugins
             }
 
             return null;
+        }
+
+        #endregion
+
+        #region Cleanup
+
+        void Unload()
+        {
+            foreach (var entity in BaseNetworkable.serverEntities)
+            {
+                if (entity is BasePlayer npc && npc.IsNpc && npc.displayName == "Raider")
+                {
+                    npc.Kill();
+                }
+            }
         }
 
         #endregion
