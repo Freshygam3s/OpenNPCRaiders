@@ -6,8 +6,8 @@ using Rust;
 
 namespace Oxide.Plugins
 {
-    [Info("OpenNpcRaiders", "FreshX", "1.2.5")]
-    [Description("Fixed NPC Raiders using StringPool and confirmed shortnames")]
+    [Info("OpenNpcRaiders", "FreshX", "1.3.4")]
+    [Description("NPC Raiders with custom Roadsign/M249/AK gear sets and HP scaling")]
     public class OpenNpcRaiders : RustPlugin
     {
         private string _activePrefab;
@@ -16,23 +16,13 @@ namespace Oxide.Plugins
         private ConfigData config;
         private class ConfigData
         {
-            public DamageSettings Damage = new DamageSettings();
             public RaidSettings Raid = new RaidSettings();
-        }
-        private class DamageSettings
-        {
-            public bool DamagePlayers = true;
-            public bool DamageBuildings = true;
         }
         private class RaidSettings
         {
-            public int MinEasy = 2, MaxEasy = 3;
-            public int MinNormal = 3, MaxNormal = 6;
-            public int MinHard = 5, MaxHard = 8;
+            public float DespawnTime = 600f;
+            public bool ParachuteEntry = true;
             public float SpawnRadius = 45f;
-            public float DespawnTime = 420f;
-            public bool AllowOfflineRaids = true; 
-            public bool ShowMapMarker = true; 
         }
 
         protected override void LoadDefaultConfig() => config = new ConfigData();
@@ -40,108 +30,141 @@ namespace Oxide.Plugins
         protected override void SaveConfig() => Config.WriteObject(config);
         #endregion
 
-        void Init() => ResolvePrefabPath();
+        void Init() => ResolvePrefab();
 
-        private void ResolvePrefabPath()
+        private void ResolvePrefab()
         {
-            // List of potential full paths for different server versions
-            string[] possibilities = new string[]
-            {
-                "assets/rust.ai/agents/npcplayerapex/scientist/scientistfull_heavy.prefab",
-                "assets/prefabs/npc/scientist/scientistfull_heavy.prefab",
-                "assets/rust.ai/agents/npcplayerapex/scientist/scientist_scavenger.prefab",
-                "assets/prefabs/npc/scientist/scientist.prefab",
-		"assets/rust.ai/agents/npcplayer/humannpc/scientist/scientistnpc.prefab",
-		"assets/rust.ai/agents/npcplayer/humannpc/scientist/scientistnpc_full_any.prefab"
-            };
-
-            foreach (var path in possibilities)
-            {
-                // StringPool.Get is the gold standard for checking if a prefab exists in memory
-                if (StringPool.Get(path) != 0)
-                {
-                    _activePrefab = path;
-                    Puts($"[SUCCESS] Valid prefab found: {path}");
-                    return;
-                }
-            }
-
-            // If full paths fail, we use the shortname your console confirmed
-            _activePrefab = "scientistnpc_full_any";
-            Puts($"[WARNING] No full path found. Falling back to shortname: {_activePrefab}");
+            _activePrefab = StringPool.Get("assets/rust.ai/agents/npcplayerapex/scientist/scientistfull_heavy.prefab") != 0 
+                ? "assets/rust.ai/agents/npcplayerapex/scientist/scientistfull_heavy.prefab" 
+                : "scientistnpc_full_any";
         }
 
         [ChatCommand("npcrraid")]
         private void CmdNpcRaid(BasePlayer player, string command, string[] args)
         {
-            if (player.net.connection.authLevel < 2) { SendReply(player, "Admin access required."); return; }
+            if (player.net.connection.authLevel < 2) return;
             
             BuildingPrivlidge tc = GetRandomToolCupboard();
             if (tc == null) 
-            { 
-                SendReply(player, "Error: No owned Tool Cupboards found on map."); 
-                return; 
-            }
-
-            string difficulty = args.Length > 0 ? args[0].ToLower() : "normal";
-            StartRaid(tc.transform.position, difficulty);
-            
-            string grid = GetGrid(tc.transform.position);
-            SendReply(player, $"<color=orange>RAID BEGUN!</color> Location: <color=#5af>Grid {grid}</color>");
-        }
-
-        private void StartRaid(Vector3 targetPos, string difficulty)
-        {
-            int min = config.Raid.MinNormal, max = config.Raid.MaxNormal;
-            if (difficulty == "easy") { min = config.Raid.MinEasy; max = config.Raid.MaxEasy; }
-            else if (difficulty == "hard") { min = config.Raid.MinHard; max = config.Raid.MaxHard; }
-
-            int count = UnityEngine.Random.Range(min, max + 1);
-
-            for (int i = 0; i < count; i++) 
-                SpawnRaider(GetSpawnPoint(targetPos), _activePrefab);
-
-            if (config.Raid.ShowMapMarker)
-                CreateMapMarker(targetPos);
-        }
-
-        private void SpawnRaider(Vector3 spawnPos, string prefabPath)
-        {
-            BaseEntity entity = GameManager.server.CreateEntity(prefabPath, spawnPos);
-            if (entity == null) 
             {
-                Puts($"[ERROR] Failed to create entity with prefab: {prefabPath}");
+                SendReply(player, "Error: No owned TC found on map.");
                 return;
             }
 
-            BasePlayer npc = entity as BasePlayer;
-            if (npc == null) 
-            { 
-                entity.Kill(); 
-                return; 
+            string diff = args.Length > 0 ? args[0].ToLower() : "normal";
+            StartUltimateRaid(tc.transform.position, diff);
+            
+            SendReply(player, $"<color=#ff4444>RAID EVENT STARTED!</color> Difficulty: <color=yellow>{diff.ToUpper()}</color>");
+        }
+
+        private void StartUltimateRaid(Vector3 targetPos, string diff)
+        {
+            int count = 5; 
+            bool spawnBoss = false;
+
+            switch (diff)
+            {
+                case "easy":   
+                    count = 3; 
+                    spawnBoss = false; 
+                    break;
+                case "normal": 
+                    count = 5; 
+                    spawnBoss = false; 
+                    break;
+                case "hard":   
+                    count = 8; 
+                    spawnBoss = true;  
+                    break;
+                case "boss":   
+                    count = 5; 
+                    spawnBoss = true;  
+                    break; 
+                default:       
+                    count = 5; 
+                    spawnBoss = false; 
+                    break;
             }
 
-            npc.displayName = "Raider";
+            // Spawn standard squad
+            for (int i = 0; i < count; i++)
+            {
+                Vector3 spawnPos = GetSpawnPoint(targetPos);
+                if (config.Raid.ParachuteEntry) spawnPos.y += 50f;
+                SpawnRaider(spawnPos, _activePrefab, false, diff);
+            }
+
+            // Spawn Commander if applicable
+            if (spawnBoss)
+            {
+                Vector3 bossSpawn = GetSpawnPoint(targetPos);
+                if (config.Raid.ParachuteEntry) bossSpawn.y += 55f;
+                SpawnRaider(bossSpawn, _activePrefab, true, diff);
+            }
+
+            CreateMapMarker(targetPos);
+        }
+
+        private void SpawnRaider(Vector3 pos, string prefab, bool isBoss, string diff)
+        {
+            BaseEntity entity = GameManager.server.CreateEntity(prefab, pos);
+            if (entity == null) return;
+
+            BasePlayer npc = entity as BasePlayer;
+            npc.displayName = isBoss ? "ELITE COMMANDER" : "Raider";
             npc.Spawn();
 
-            // Loadout
+            if (config.Raid.ParachuteEntry)
+            {
+                BaseEntity chute = GameManager.server.CreateEntity("assets/prefabs/misc/parachute/parachute.prefab", pos);
+                if (chute != null)
+                {
+                    chute.SetParent(npc);
+                    chute.Spawn();
+                }
+            }
+
             npc.inventory.Strip();
-            npc.inventory.GiveItem(ItemManager.CreateByName("rifle.ak", 1), npc.inventory.containerBelt);
-            npc.inventory.GiveItem(ItemManager.CreateByName("ammo.rifle", 256), npc.inventory.containerMain);
             
-            var weapon = npc.inventory.containerBelt.GetSlot(0);
-            if (weapon != null) npc.UpdateActiveItem(weapon.uid);
+            if (isBoss)
+            {
+                if (diff == "hard")
+                {
+                    // HARD Commander: AK-47 + Roadsign Set + 300HP
+                    npc.inventory.GiveItem(ItemManager.CreateByName("rifle.ak", 1), npc.inventory.containerBelt);
+                    npc.inventory.GiveItem(ItemManager.CreateByName("roadsign.jacket", 1), npc.inventory.containerWear);
+                    npc.inventory.GiveItem(ItemManager.CreateByName("roadsign.kilt", 1), npc.inventory.containerWear);
+                    npc.inventory.GiveItem(ItemManager.CreateByName("coffeecan.helmet", 1), npc.inventory.containerWear);
+                    npc.InitializeHealth(300f, 300f);
+                }
+                else if (diff == "boss")
+                {
+                    // BOSS Commander: M249 + 200HP
+                    npc.inventory.GiveItem(ItemManager.CreateByName("lmg.m249", 1), npc.inventory.containerBelt);
+                    npc.InitializeHealth(200f, 200f);
+                }
+            }
+            else
+            {
+                // Standard Raiders
+                string weapon = (diff == "hard" || diff == "boss") ? "rifle.ak" : "smg.mp5";
+                npc.inventory.GiveItem(ItemManager.CreateByName(weapon, 1), npc.inventory.containerBelt);
+            }
 
-            npc.Teleport(spawnPos);
+            npc.inventory.GiveItem(ItemManager.CreateByName("ammo.rifle", 256), npc.inventory.containerMain);
+            npc.inventory.GiveItem(ItemManager.CreateByName("medical.syringe", 2), npc.inventory.containerMain);
 
-            // Despawn Timer
+            var activeWeapon = npc.inventory.containerBelt.GetSlot(0);
+            if (activeWeapon != null) npc.UpdateActiveItem(activeWeapon.uid);
+
             timer.Once(config.Raid.DespawnTime, () => { if (npc != null && !npc.IsDestroyed) npc.Kill(); });
         }
 
         #region Helpers
         private Vector3 GetSpawnPoint(Vector3 target)
         {
-            Vector3 pos = target + (UnityEngine.Random.insideUnitSphere.normalized * config.Raid.SpawnRadius);
+            Vector2 randomCircle = UnityEngine.Random.insideUnitCircle.normalized * config.Raid.SpawnRadius;
+            Vector3 pos = new Vector3(target.x + randomCircle.x, 0, target.z + randomCircle.y);
             pos.y = TerrainMeta.HeightMap.GetHeight(pos) + 2f;
             return pos;
         }
@@ -151,15 +174,6 @@ namespace Oxide.Plugins
             BaseEntity marker = GameManager.server.CreateEntity("assets/prefabs/deployable/vendingmachine/vending_mapmarker.prefab", pos);
             if (marker != null) marker.Spawn();
             timer.Once(config.Raid.DespawnTime, () => { if (marker != null) marker.Kill(); });
-        }
-
-        private string GetGrid(Vector3 pos)
-        {
-            float worldSize = ConVar.Server.worldsize;
-            float offset = worldSize / 2;
-            int col = Mathf.FloorToInt((pos.x + offset) / 146.3f);
-            int row = Mathf.FloorToInt((offset - pos.z) / 146.3f);
-            return $"{(char)('A' + col)}{row}";
         }
 
         private BuildingPrivlidge GetRandomToolCupboard()
@@ -173,10 +187,10 @@ namespace Oxide.Plugins
         void Unload()
         {
             foreach (var p in BasePlayer.allPlayerList)
-                if (p != null && p.IsNpc && p.displayName == "Raider") p.Kill();
-
-            foreach (var ent in BaseNetworkable.serverEntities)
-                if (ent != null && ent.PrefabName.Contains("vending_mapmarker")) ent.Kill();
+            {
+                if (p != null && p.IsNpc && (p.displayName == "Raider" || p.displayName == "ELITE COMMANDER"))
+                    p.Kill();
+            }
         }
         #endregion
     }
