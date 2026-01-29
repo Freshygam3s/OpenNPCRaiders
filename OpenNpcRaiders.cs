@@ -85,12 +85,15 @@ namespace Oxide.Plugins
                 return;
             }
 
-            BasePlayer owner = BasePlayer.FindByID(tc.OwnerID);
-            if ((owner == null || !owner.IsConnected) && !CheckOfflineRaid())
+            bool ownerOnline = BasePlayer.activePlayerList
+                .Exists(p => p.userID == tc.OwnerID);
+
+            if (!ownerOnline && !CheckOfflineRaid())
             {
                 SendReply(player, "Offline raid was blocked.");
                 return;
             }
+
 
             StartRaid(tc.transform.position, difficulty);
             SendReply(player, $"NPC raid started ({difficulty}) on TC owned by {tc.OwnerID}");
@@ -141,9 +144,10 @@ namespace Oxide.Plugins
         private Vector3 GetSpawnPoint(Vector3 target)
         {
             Vector3 pos = target + UnityEngine.Random.insideUnitSphere * config.Raid.SpawnRadius;
-            pos.y = TerrainMeta.HeightMap.GetHeight(pos);
+            pos.y = TerrainMeta.HeightMap.GetHeight(pos) + 1f;
             return pos;
         }
+
 
         private void SpawnRaider(Vector3 spawnPos, bool rockets)
         {
@@ -167,6 +171,9 @@ namespace Oxide.Plugins
             npc.displayName = "Raider";
             npc.InitializeHealth(250f, 250f);
 
+            npc.EnablePlayerCollider(true);   // important
+            npc.StartThinking();              // CRITICAL
+
             SetupInventory(npc, rockets);
 
             timer.Once(config.Raid.DespawnTime, () =>
@@ -175,6 +182,8 @@ namespace Oxide.Plugins
                     npc.Kill();
             });
         }
+
+
 
         #endregion
 
