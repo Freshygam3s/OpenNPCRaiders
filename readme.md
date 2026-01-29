@@ -1,104 +1,116 @@
-OpenNpcRaiders Plugin for Rust
+<div align="center">
+🧨 OpenNpcRaiders
+Dynamic NPC Raid Events for Rust (uMod / Oxide)
 
-Description
+Version: 1.2.5
+Author: FreshX
 
-OpenNpcRaiders is a manual hybrid NPC Raiders plugin for Rust. NPCs can attack both players and buildings, and raids are triggered manually by admins. The plugin supports difficulty levels that adjust the number of NPCs and their weapons.
+</div>
+📖 Overview
 
-Features
+OpenNpcRaiders is a Rust uMod/Oxide plugin that introduces dynamic NPC raid events using fully validated NPC prefabs. The plugin spawns armed NPC raiders near player-owned Tool Cupboards, creating immersive PvE raid scenarios that are both challenging and server-friendly.
 
-Manual admin-triggered raids (/npcrraid)
+To ensure long-term stability across Rust updates, the plugin automatically resolves valid NPC prefabs using StringPool, with a confirmed shortname fallback when required.
 
-Random base selection using Tool Cupboards
+✨ Features
 
-Hybrid damage: players and buildings
+🧠 Smart Prefab Resolution
+Automatically detects valid NPC prefabs at runtime using StringPool
 
-Difficulty levels: easy, normal, hard
+⚔️ Dynamic NPC Raids
+NPC raiders spawn near randomly selected player Tool Cupboards
 
-Configurable spawn distance and despawn timer
+🎚 Difficulty Levels
+Supports Easy, Normal, and Hard raid tiers
 
-Fully open-source and modifiable
+🗺 Optional Map Marker
+Displays a temporary marker at the raid location
 
+⏱ Auto Despawn & Cleanup
+NPCs and map markers are removed after a configurable duration
 
-Installation
+🔐 Admin Controlled
+Raid events can only be initiated by server administrators
 
-1. Place the plugin in the Rust server plugin folder:
+🕹 Commands
+/npcrraid [easy | normal | hard]
 
+Examples
 
+/npcrraid → Starts a Normal raid
 
-/oxide/plugins/OpenNpcRaiders.cs
+/npcrraid easy
 
-2. Reload the plugin in the server console or RCON:
+/npcrraid hard
 
+⚙ Configuration
+{
+  "Damage": {
+    "DamagePlayers": true,
+    "DamageBuildings": true
+  },
+  "Raid": {
+    "MinEasy": 2,
+    "MaxEasy": 3,
+    "MinNormal": 3,
+    "MaxNormal": 6,
+    "MinHard": 5,
+    "MaxHard": 8,
+    "SpawnRadius": 45.0,
+    "DespawnTime": 420.0,
+    "AllowOfflineRaids": true,
+    "ShowMapMarker": true
+  }
+}
 
+Configuration Details
+Setting	Description
+SpawnRadius	Distance from the Tool Cupboard where NPCs spawn
+DespawnTime	Time (seconds) before NPCs and markers are removed
+ShowMapMarker	Enables or disables raid map markers
+AllowOfflineRaids	Allows raids on offline player bases
+🔫 NPC Loadout
 
-oxide.reload OpenNpcRaiders
+AK Rifle
 
-Commands
+Rifle Ammo
 
-/npcrraid - Trigger a raid manually on a random base
+Automatically equipped on spawn
 
-/npcrraid easy - Easy difficulty raid
+NPCs are spawned as hostile raiders and cleaned up safely on plugin unload.
 
-/npcrraid normal - Normal difficulty raid (default)
+🧩 Compatibility
 
-/npcrraid hard - Hard difficulty raid
+✔ Rust Dedicated Server
 
+✔ uMod / Oxide
 
-Config Options
+✔ Compatible across multiple Rust prefab versions
 
-The plugin will create a config file at:
+🔑 Permissions
 
-/oxide/config/OpenNpcRaiders.json
+Admin Only (authLevel ≥ 2)
 
-Raid Settings
+🛠 Technical Notes
 
-Option	Description	Default
+Uses StringPool.Get() for safe prefab validation
 
-MinNPCsEasy	Minimum NPCs for easy difficulty	2
-MaxNPCsEasy	Maximum NPCs for easy difficulty	3
-MinNPCsNormal	Minimum NPCs for normal difficulty	3
-MaxNPCsNormal	Maximum NPCs for normal difficulty	6
-MinNPCsHard	Minimum NPCs for hard difficulty	5
-MaxNPCsHard	Maximum NPCs for hard difficulty	8
-SpawnDistance	Distance NPCs spawn from target	50
-DespawnTime	Time in seconds before NPCs despawn	420
-AllowOfflineRaids	Whether NPCs can raid offline bases	true
-OfflineRaidChance	Chance an offline raid occurs	0.5
-EasyRockets	Whether NPCs use rockets on easy	false
-NormalRockets	Whether NPCs use rockets on normal	true
-HardRockets	Whether NPCs use rockets on hard	true
+Falls back to confirmed shortnames if full paths are unavailable
 
+Designed to minimize server impact and ensure stability
 
-Damage Settings
+🧹 Cleanup Behavior
 
-Option	Description	Default
+All active NPC raiders are removed on plugin unload
 
-DamagePlayers	NPCs can damage players	true
-DamageBuildings	NPCs can damage buildings	true
+All temporary map markers are automatically destroyed
 
+👤 Author
 
-How it Works
+FreshX
 
-Admin triggers a raid using /npcrraid [difficulty]
+<div align="center">
 
-Plugin selects a random base by Tool Cupboard ownership
+⭐ If you enjoy this plugin, consider sharing feedback or contributing! ⭐
 
-NPCs spawn at random positions around the base
-
-NPCs move toward the base and attack players/buildings
-
-NPCs despawn after the configured timer
-
-
-Notes
-
-Only admins can trigger raids
-
-Plugin does not run automatic or timed raids
-
-Compatible with uMod/Oxide servers
-
-
-License
-
-MIT License – free to use, modify, and distribute.
+</div>
