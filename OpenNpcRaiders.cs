@@ -3,195 +3,203 @@ using System.Collections.Generic;
 using UnityEngine;
 using Oxide.Core;
 using Rust;
+using Facepunch; // Added for memory list handling
 
 namespace Oxide.Plugins
 {
-    [Info("OpenNpcRaiders", "FreshX", "1.3.4")]
-    [Description("NPC Raiders with custom Roadsign/M249/AK gear sets and HP scaling")]
+    [Info("OpenNpcRaiders", "FreshX", "1.6.0")]
+    [Description("NPC Raiders that spawn on ground and attack structures with fixed SetKnown logic")]
     public class OpenNpcRaiders : RustPlugin
     {
-        private string _activePrefab;
+        private const string PlanePrefab = "assets/prefabs/npc/cargo plane/cargo_plane.prefab";
+        private string activeScientistPrefab;
 
         #region Configuration
         private ConfigData config;
         private class ConfigData
         {
             public RaidSettings Raid = new RaidSettings();
+            public LootSettings Loot = new LootSettings();
+            public PrefabSettings Prefabs = new PrefabSettings();
         }
         private class RaidSettings
         {
             public float DespawnTime = 600f;
-            public bool ParachuteEntry = true;
-            public float SpawnRadius = 45f;
+            public float SpawnRadius = 35f;
+            public bool ShowPlaneVisual = true;
+            public float PlaneHeight = 200f;
+            public bool AttackStructures = true;
+            public float StructureAttackRange = 5f;
+        }
+        private class PrefabSettings
+        {
+            public List<string> ScientistPrefabs = new List<string>
+            {
+                "assets/rust.ai/agents/npcplayer/humannpc/scientist/scientistnpc_full_any.prefab",
+                "assets/rust.ai/agents/npcplayer/humannpc/scientist/scientistnpc_heavy.prefab"
+            };
+        }
+        private class LootSettings
+        {
+            public List<string> EasyLoot = new List<string> { "ammo.rifle", "scrap" };
+            public List<string> NormalLoot = new List<string> { "ammo.rifle", "scrap", "techparts" };
+            public List<string> HardLoot = new List<string> { "ammo.rifle", "hq.metal", "explosives" };
+            public List<string> BossLoot = new List<string> { "lmg.m249", "explosives", "hq.metal" };
         }
 
         protected override void LoadDefaultConfig() => config = new ConfigData();
-        protected override void LoadConfig() { base.LoadConfig(); config = Config.ReadObject<ConfigData>(); }
+        protected override void LoadConfig()
+        {
+            base.LoadConfig();
+            config = Config.ReadObject<ConfigData>();
+        }
         protected override void SaveConfig() => Config.WriteObject(config);
         #endregion
 
-        void Init() => ResolvePrefab();
+        void OnServerInitialized() => ResolveScientistPrefab();
 
-        private void ResolvePrefab()
+        private void ResolveScientistPrefab()
         {
-            _activePrefab = StringPool.Get("assets/rust.ai/agents/npcplayerapex/scientist/scientistfull_heavy.prefab") != 0 
-                ? "assets/rust.ai/agents/npcplayerapex/scientist/scientistfull_heavy.prefab" 
-                : "scientistnpc_full_any";
+            foreach (var prefab in config.Prefabs.ScientistPrefabs)
+            {
+                if (GameManager.server.FindPrefab(prefab) != null)
+                {
+                    activeScientistPrefab = prefab;
+                    return;
+                }
+            }
+            activeScientistPrefab = "assets/rust.ai/agents/npcplayer/humannpc/scientist/scientistnpc_full_any.prefab";
         }
 
         [ChatCommand("npcrraid")]
-        private void CmdNpcRaid(BasePlayer player, string command, string[] args)
+        private void CmdNpcRaid(BasePlayer player, string cmd, string[] args)
         {
-            if (player.net.connection.authLevel < 2) return;
-            
+            if (player?.net?.connection == null || player.net.connection.authLevel < 2) return;
+
             BuildingPrivlidge tc = GetRandomToolCupboard();
-            if (tc == null) 
+            if (tc == null)
             {
-                SendReply(player, "Error: No owned TC found on map.");
+                SendReply(player, "❌ No valid TCs found.");
                 return;
             }
 
-            string diff = args.Length > 0 ? args[0].ToLower() : "normal";
-            StartUltimateRaid(tc.transform.position, diff);
-            
-            SendReply(player, $"<color=#ff4444>RAID EVENT STARTED!</color> Difficulty: <color=yellow>{diff.ToUpper()}</color>");
+            string difficulty = args.Length > 0 ? args[0].ToLower() : "normal";
+            StartRaid(tc.transform.position, difficulty);
+            SendReply(player, $"🔥 Raiders deployed! Target TC at {tc.transform.position}.");
         }
 
-        private void StartUltimateRaid(Vector3 targetPos, string diff)
+        private void StartRaid(Vector3 targetPos, string diff)
         {
-            int count = 5; 
-            bool spawnBoss = false;
+            if (config.Raid.ShowPlaneVisual) SpawnVisualPlane(targetPos);
 
-            switch (diff)
-            {
-                case "easy":   
-                    count = 3; 
-                    spawnBoss = false; 
-                    break;
-                case "normal": 
-                    count = 5; 
-                    spawnBoss = false; 
-                    break;
-                case "hard":   
-                    count = 8; 
-                    spawnBoss = true;  
-                    break;
-                case "boss":   
-                    count = 5; 
-                    spawnBoss = true;  
-                    break; 
-                default:       
-                    count = 5; 
-                    spawnBoss = false; 
-                    break;
-            }
+            int count = diff == "easy" ? 3 : diff == "hard" ? 8 : 5;
+            bool spawnBoss = (diff == "hard" || diff == "boss");
 
-            // Spawn standard squad
-            for (int i = 0; i < count; i++)
-            {
-                Vector3 spawnPos = GetSpawnPoint(targetPos);
-                if (config.Raid.ParachuteEntry) spawnPos.y += 50f;
-                SpawnRaider(spawnPos, _activePrefab, false, diff);
-            }
-
-            // Spawn Commander if applicable
-            if (spawnBoss)
-            {
-                Vector3 bossSpawn = GetSpawnPoint(targetPos);
-                if (config.Raid.ParachuteEntry) bossSpawn.y += 55f;
-                SpawnRaider(bossSpawn, _activePrefab, true, diff);
-            }
-
-            CreateMapMarker(targetPos);
+            for (int i = 0; i < count; i++) SpawnRaider(targetPos, false, diff);
+            if (spawnBoss) SpawnRaider(targetPos, true, diff);
         }
 
-        private void SpawnRaider(Vector3 pos, string prefab, bool isBoss, string diff)
+        private void SpawnVisualPlane(Vector3 target)
         {
-            BaseEntity entity = GameManager.server.CreateEntity(prefab, pos);
+            Vector3 start = target + new Vector3(-800f, config.Raid.PlaneHeight, 0);
+            Vector3 end = target + new Vector3(800f, config.Raid.PlaneHeight, 0);
+            BaseEntity plane = GameManager.server.CreateEntity(PlanePrefab, start);
+            if (plane == null) return;
+            plane.Spawn();
+            plane.GetComponent<CargoPlane>()?.InitDropPosition(end);
+            timer.Once(60f, () => { if (plane != null && !plane.IsDestroyed) plane.Kill(); });
+        }
+
+        private void SpawnRaider(Vector3 target, bool isBoss, string diff)
+        {
+            Vector3 spawnPos = GetGroundPosition(target);
+            BaseEntity entity = GameManager.server.CreateEntity(activeScientistPrefab, spawnPos);
             if (entity == null) return;
 
-            BasePlayer npc = entity as BasePlayer;
+            entity.Spawn();
+            ScientistNPC npc = entity as ScientistNPC;
+            if (npc == null) { entity.Kill(); return; }
+
+            timer.Once(2f, () => {
+                if (npc == null || npc.IsDestroyed) return;
+                npc.SetDestination(target);
+                if (config.Raid.AttackStructures) InitializeRaidBehavior(npc, target);
+            });
+
             npc.displayName = isBoss ? "ELITE COMMANDER" : "Raider";
-            npc.Spawn();
-
-            if (config.Raid.ParachuteEntry)
-            {
-                BaseEntity chute = GameManager.server.CreateEntity("assets/prefabs/misc/parachute/parachute.prefab", pos);
-                if (chute != null)
-                {
-                    chute.SetParent(npc);
-                    chute.Spawn();
-                }
-            }
-
             npc.inventory.Strip();
-            
-            if (isBoss)
-            {
-                if (diff == "hard")
-                {
-                    // HARD Commander: AK-47 + Roadsign Set + 300HP
-                    npc.inventory.GiveItem(ItemManager.CreateByName("rifle.ak", 1), npc.inventory.containerBelt);
-                    npc.inventory.GiveItem(ItemManager.CreateByName("roadsign.jacket", 1), npc.inventory.containerWear);
-                    npc.inventory.GiveItem(ItemManager.CreateByName("roadsign.kilt", 1), npc.inventory.containerWear);
-                    npc.inventory.GiveItem(ItemManager.CreateByName("coffeecan.helmet", 1), npc.inventory.containerWear);
-                    npc.InitializeHealth(300f, 300f);
-                }
-                else if (diff == "boss")
-                {
-                    // BOSS Commander: M249 + 200HP
-                    npc.inventory.GiveItem(ItemManager.CreateByName("lmg.m249", 1), npc.inventory.containerBelt);
-                    npc.InitializeHealth(200f, 200f);
-                }
-            }
-            else
-            {
-                // Standard Raiders
-                string weapon = (diff == "hard" || diff == "boss") ? "rifle.ak" : "smg.mp5";
-                npc.inventory.GiveItem(ItemManager.CreateByName(weapon, 1), npc.inventory.containerBelt);
-            }
-
-            npc.inventory.GiveItem(ItemManager.CreateByName("ammo.rifle", 256), npc.inventory.containerMain);
-            npc.inventory.GiveItem(ItemManager.CreateByName("medical.syringe", 2), npc.inventory.containerMain);
-
-            var activeWeapon = npc.inventory.containerBelt.GetSlot(0);
-            if (activeWeapon != null) npc.UpdateActiveItem(activeWeapon.uid);
+            GiveGear(npc, isBoss, diff);
+            GiveLoot(npc, isBoss, diff);
 
             timer.Once(config.Raid.DespawnTime, () => { if (npc != null && !npc.IsDestroyed) npc.Kill(); });
         }
 
-        #region Helpers
-        private Vector3 GetSpawnPoint(Vector3 target)
+        private void InitializeRaidBehavior(ScientistNPC npc, Vector3 target)
         {
-            Vector2 randomCircle = UnityEngine.Random.insideUnitCircle.normalized * config.Raid.SpawnRadius;
-            Vector3 pos = new Vector3(target.x + randomCircle.x, 0, target.z + randomCircle.y);
-            pos.y = TerrainMeta.HeightMap.GetHeight(pos) + 2f;
-            return pos;
+            timer.Repeat(5f, 0, () =>
+            {
+                if (npc == null || npc.IsDestroyed || npc.IsDead()) return;
+
+                if (Vector3.Distance(npc.transform.position, target) < 20f)
+                {
+                    // If NPC already knows about something (like a player), don't get distracted by walls
+                    if (npc.Brain?.Senses?.Memory?.All != null && npc.Brain.Senses.Memory.All.Count > 0)
+                        return;
+
+                    List<BaseEntity> nearby = Pool.GetList<BaseEntity>();
+                    Vis.Entities(npc.transform.position, config.Raid.StructureAttackRange, nearby, Layers.Mask.Construction | Layers.Mask.Deployed);
+
+                    foreach (var ent in nearby)
+                    {
+                        if (ent is Door || ent is BuildingBlock)
+                        {
+                            // FIXED: Use the 2-argument overload (Entity, ThreatSource) 
+                            // This is the most compatible version across Rust updates
+                            npc.Brain.Senses.Memory.SetKnown(ent, npc, null);
+                            npc.SetDestination(npc.transform.position); 
+                            break; 
+                        }
+                    }
+                    Pool.FreeList(ref nearby);
+                }
+            });
         }
 
-        private void CreateMapMarker(Vector3 pos)
+        private void GiveGear(BasePlayer npc, bool isBoss, string diff)
         {
-            BaseEntity marker = GameManager.server.CreateEntity("assets/prefabs/deployable/vendingmachine/vending_mapmarker.prefab", pos);
-            if (marker != null) marker.Spawn();
-            timer.Once(config.Raid.DespawnTime, () => { if (marker != null) marker.Kill(); });
+            string weapon = isBoss ? (diff == "boss" ? "lmg.m249" : "rifle.ak") : (diff == "hard" ? "rifle.ak" : "smg.mp5");
+            npc.inventory.GiveItem(ItemManager.CreateByName(weapon, 1), npc.inventory.containerBelt);
+            if (isBoss) npc.InitializeHealth(400f, 400f);
+        }
+
+        private void GiveLoot(BasePlayer npc, bool isBoss, string diff)
+        {
+            List<string> table = isBoss ? config.Loot.BossLoot : (diff == "easy" ? config.Loot.EasyLoot : (diff == "hard" ? config.Loot.HardLoot : config.Loot.NormalLoot));
+            for (int i = 0; i < (isBoss ? 4 : 2); i++)
+            {
+                var itemDef = ItemManager.FindItemDefinition(table.GetRandom());
+                if (itemDef != null) npc.inventory.containerMain.AddItem(itemDef, UnityEngine.Random.Range(1, 5));
+            }
+        }
+
+        private Vector3 GetGroundPosition(Vector3 center)
+        {
+            Vector2 randomCircle = UnityEngine.Random.insideUnitCircle * config.Raid.SpawnRadius;
+            Vector3 randomPos = center + new Vector3(randomCircle.x, 0, randomCircle.y);
+            randomPos.y = TerrainMeta.HeightMap.GetHeight(randomPos) + 0.5f;
+            return randomPos;
         }
 
         private BuildingPrivlidge GetRandomToolCupboard()
         {
-            var tcs = UnityEngine.Object.FindObjectsOfType<BuildingPrivlidge>();
-            List<BuildingPrivlidge> valid = new List<BuildingPrivlidge>();
-            foreach (var tc in tcs) if (tc != null && tc.OwnerID != 0) valid.Add(tc);
-            return valid.Count == 0 ? null : valid[UnityEngine.Random.Range(0, valid.Count)];
-        }
-
-        void Unload()
-        {
-            foreach (var p in BasePlayer.allPlayerList)
+            var allTcs = UnityEngine.Object.FindObjectsOfType<BuildingPrivlidge>();
+            List<BuildingPrivlidge> validTcs = new List<BuildingPrivlidge>();
+            foreach (var tc in allTcs)
             {
-                if (p != null && p.IsNpc && (p.displayName == "Raider" || p.displayName == "ELITE COMMANDER"))
-                    p.Kill();
+                if (tc != null && tc.OwnerID != 0 && !tc.IsDestroyed) 
+                    validTcs.Add(tc);
             }
+            return validTcs.Count == 0 ? null : validTcs.GetRandom();
         }
-        #endregion
     }
 }
