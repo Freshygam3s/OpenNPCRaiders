@@ -186,7 +186,7 @@ namespace Oxide.Plugins
         {
             Vector2 randomCircle = UnityEngine.Random.insideUnitCircle * config.Raid.SpawnRadius;
             Vector3 randomPos = center + new Vector3(randomCircle.x, 0, randomCircle.y);
-            randomPos.y = TerrainMeta.HeightMap.GetHeight(randomPos) + 0.5f;
+            randomPos.y = TerrainMeta.HeightMap.GetHeight(randomPos) + 1.0f;
             return randomPos;
         }
 
