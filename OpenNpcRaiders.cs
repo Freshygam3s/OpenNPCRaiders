@@ -40,13 +40,13 @@ namespace Oxide.Plugins
 
         private class RaidSettings
         {
-            public float DespawnTime  { get; set; } = 600f;   // seconds before raiders auto-despawn
-            public float SpawnRadius  { get; set; } = 35f;    // radius around TC to spawn raiders
-            public float AttackRadius { get; set; } = 8f;     // radius within which NPCs melee structures
+            public float DespawnTime      { get; set; } = 600f;
+            public float SpawnRadius      { get; set; } = 35f;
+            public float AttackRadius     { get; set; } = 8f;
             public bool  AttackStructures { get; set; } = true;
-            public int   EasyCount   { get; set; } = 3;
-            public int   NormalCount { get; set; } = 5;
-            public int   HardCount   { get; set; } = 8;
+            public int   EasyCount        { get; set; } = 3;
+            public int   NormalCount      { get; set; } = 5;
+            public int   HardCount        { get; set; } = 8;
         }
 
         protected override void LoadDefaultConfig()
@@ -77,12 +77,12 @@ namespace Oxide.Plugins
         {
             bool dirty = false;
 
-            if (_config.Raid.DespawnTime  < 30f)   { _config.Raid.DespawnTime  = 30f;   dirty = true; }
-            if (_config.Raid.SpawnRadius  < 5f)    { _config.Raid.SpawnRadius  = 5f;    dirty = true; }
-            if (_config.Raid.AttackRadius < 3f)    { _config.Raid.AttackRadius = 3f;    dirty = true; }
-            if (_config.Raid.EasyCount    < 1)     { _config.Raid.EasyCount    = 1;     dirty = true; }
-            if (_config.Raid.NormalCount  < 1)     { _config.Raid.NormalCount  = 1;     dirty = true; }
-            if (_config.Raid.HardCount    < 1)     { _config.Raid.HardCount    = 1;     dirty = true; }
+            if (_config.Raid.DespawnTime  < 30f) { _config.Raid.DespawnTime  = 30f; dirty = true; }
+            if (_config.Raid.SpawnRadius  < 5f)  { _config.Raid.SpawnRadius  = 5f;  dirty = true; }
+            if (_config.Raid.AttackRadius < 3f)  { _config.Raid.AttackRadius = 3f;  dirty = true; }
+            if (_config.Raid.EasyCount    < 1)   { _config.Raid.EasyCount    = 1;   dirty = true; }
+            if (_config.Raid.NormalCount  < 1)   { _config.Raid.NormalCount  = 1;   dirty = true; }
+            if (_config.Raid.HardCount    < 1)   { _config.Raid.HardCount    = 1;   dirty = true; }
 
             if (dirty) SaveConfig();
         }
@@ -181,21 +181,18 @@ namespace Oxide.Plugins
         // ═══════════════════════════════════════════════════════════
         private void ExecuteStaggeredSpawn(Vector3 targetPos, string difficulty)
         {
-            int count     = GetRaiderCount(difficulty);
-            bool hasBoss  = (difficulty == "hard" || difficulty == "boss");
-            string prefab = PREFAB_REGULAR;
+            int  count   = GetRaiderCount(difficulty);
+            bool hasBoss = (difficulty == "hard" || difficulty == "boss");
 
             // Fix: capture loop value with a local copy to avoid C# closure-in-loop bug
             for (int i = 0; i < count; i++)
             {
-                int index = i; // local capture
-                timer.Once(0.3f * index, () => SpawnRaider(targetPos, prefab, false, difficulty));
+                int index = i;
+                timer.Once(0.3f * index, () => SpawnRaider(targetPos, PREFAB_REGULAR, false, difficulty));
             }
 
             if (hasBoss)
-            {
                 timer.Once(0.3f * (count + 1), () => SpawnRaider(targetPos, PREFAB_HEAVY, true, difficulty));
-            }
         }
 
         private void SpawnRaider(Vector3 target, string prefab, bool isBoss, string difficulty)
@@ -214,7 +211,6 @@ namespace Oxide.Plugins
             if (npc == null) { entity.Kill(); return; }
 
             npc.displayName = isBoss ? "ELITE COMMANDER" : "Raider";
-
             npc.Spawn();
 
             // Strip default loot and apply our loadout
@@ -245,8 +241,9 @@ namespace Oxide.Plugins
                 InitializeRaidBehavior(npc, target);
             });
 
-            // Register in our tracking set
+            // Register in tracking set and log spawn location
             _activeRaiders.Add(npc);
+            Puts($"[NpcRaiders] Spawned {npc.displayName} at grid {GetGrid(spawnPos)} ({spawnPos.x:F1}, {spawnPos.y:F1}, {spawnPos.z:F1})");
 
             // Auto-despawn timer
             timer.Once(_config.Raid.DespawnTime, () =>
@@ -291,7 +288,6 @@ namespace Oxide.Plugins
                 }
                 else if (_config.Raid.AttackStructures)
                 {
-                    // Close enough — attack nearby structures
                     AttackNearbyStructure(npc);
                 }
             });
@@ -302,7 +298,7 @@ namespace Oxide.Plugins
         {
             List<BaseCombatEntity> nearby = Facepunch.Pool.Get<List<BaseCombatEntity>>();
             Vis.Entities(npc.transform.position, _config.Raid.AttackRadius, nearby,
-                Layers.Mask.Construction | Layers.Mask.Deployed);
+                LayerMask.GetMask("Construction", "Deployed"));
 
             BaseCombatEntity bestTarget = null;
             float bestDist = float.MaxValue;
@@ -320,16 +316,15 @@ namespace Oxide.Plugins
 
             if (bestTarget == null) return;
 
-            // Make NPC face and melee the structure
             npc.SetAimDirection((bestTarget.transform.position - npc.transform.position).normalized);
 
             HitInfo hit = new HitInfo
             {
-                Initiator    = npc,
-                HitEntity    = bestTarget,
-                damageTypes  = new DamageTypeList()
+                Initiator   = npc,
+                HitEntity   = bestTarget,
+                damageTypes = new DamageTypeList()
             };
-            hit.damageTypes.Add(DamageType.Explosion, 15f); // matches raider theme
+            hit.damageTypes.Add(DamageType.Explosion, 15f);
             bestTarget.OnAttacked(hit);
         }
 
@@ -343,20 +338,20 @@ namespace Oxide.Plugins
                 switch (difficulty)
                 {
                     case "hard":
-                        GiveItem(npc, "rifle.ak", npc.inventory.containerBelt);
-                        GiveItem(npc, "ammo.rifle", npc.inventory.containerMain, 180);
+                        GiveItem(npc, "rifle.ak",       npc.inventory.containerBelt);
+                        GiveItem(npc, "ammo.rifle",     npc.inventory.containerMain, 180);
                         GiveItem(npc, "coffeecan.helmet", npc.inventory.containerWear);
                         GiveItem(npc, "roadsign.jacket", npc.inventory.containerWear);
-                        GiveItem(npc, "roadsign.kilt", npc.inventory.containerWear);
+                        GiveItem(npc, "roadsign.kilt",  npc.inventory.containerWear);
                         npc.InitializeHealth(350f, 350f);
                         break;
 
                     case "boss":
-                        GiveItem(npc, "lmg.m249", npc.inventory.containerBelt);
-                        GiveItem(npc, "ammo.rifle", npc.inventory.containerMain, 500);
+                        GiveItem(npc, "lmg.m249",       npc.inventory.containerBelt);
+                        GiveItem(npc, "ammo.rifle",     npc.inventory.containerMain, 500);
                         GiveItem(npc, "metal.facemask", npc.inventory.containerWear);
                         GiveItem(npc, "metal.plate.torso", npc.inventory.containerWear);
-                        GiveItem(npc, "pants", npc.inventory.containerWear);
+                        GiveItem(npc, "pants",          npc.inventory.containerWear);
                         npc.InitializeHealth(500f, 500f);
                         break;
                 }
@@ -367,24 +362,24 @@ namespace Oxide.Plugins
                 {
                     case "easy":
                         GiveItem(npc, "pistol.semiauto", npc.inventory.containerBelt);
-                        GiveItem(npc, "ammo.pistol", npc.inventory.containerMain, 64);
+                        GiveItem(npc, "ammo.pistol",    npc.inventory.containerMain, 64);
                         npc.InitializeHealth(80f, 80f);
                         break;
 
                     case "normal":
-                        GiveItem(npc, "smg.mp5", npc.inventory.containerBelt);
-                        GiveItem(npc, "ammo.pistol", npc.inventory.containerMain, 128);
-                        GiveItem(npc, "hoodie", npc.inventory.containerWear);
-                        GiveItem(npc, "pants", npc.inventory.containerWear);
+                        GiveItem(npc, "smg.mp5",        npc.inventory.containerBelt);
+                        GiveItem(npc, "ammo.pistol",    npc.inventory.containerMain, 128);
+                        GiveItem(npc, "hoodie",         npc.inventory.containerWear);
+                        GiveItem(npc, "pants",          npc.inventory.containerWear);
                         npc.InitializeHealth(130f, 130f);
                         break;
 
                     case "hard":
                     case "boss":
-                        GiveItem(npc, "rifle.ak", npc.inventory.containerBelt);
-                        GiveItem(npc, "ammo.rifle", npc.inventory.containerMain, 180);
+                        GiveItem(npc, "rifle.ak",       npc.inventory.containerBelt);
+                        GiveItem(npc, "ammo.rifle",     npc.inventory.containerMain, 180);
                         GiveItem(npc, "roadsign.jacket", npc.inventory.containerWear);
-                        GiveItem(npc, "roadsign.kilt", npc.inventory.containerWear);
+                        GiveItem(npc, "roadsign.kilt",  npc.inventory.containerWear);
                         npc.InitializeHealth(200f, 200f);
                         break;
                 }
@@ -396,7 +391,7 @@ namespace Oxide.Plugins
             Item item = ItemManager.CreateByName(shortname, amount);
             if (item == null)
             {
-                PrintWarning($"[NpcRaiders] Unknown item: {shortname}");
+                PrintWarning($"[NpcRaiders] Unknown item shortname: {shortname}");
                 return;
             }
             if (!item.MoveToContainer(container))
@@ -407,7 +402,7 @@ namespace Oxide.Plugins
         //  HELPERS
         // ═══════════════════════════════════════════════════════════
 
-        // Returns true if the NPC's AI memory contains a living player
+        // Returns true if the NPC's AI memory contains a living player target
         private bool HasPlayerTarget(ScientistNPC npc)
         {
             if (npc?.Brain?.Senses?.Memory == null) return false;
@@ -434,7 +429,7 @@ namespace Oxide.Plugins
             return count;
         }
 
-        // Samples the NavMesh near the target position so NPCs don't spawn inside rocks/water
+        // Samples the NavMesh near the target so NPCs don't spawn inside rocks or water
         private bool TryGetNavMeshPosition(Vector3 center, out Vector3 result)
         {
             for (int attempt = 0; attempt < 10; attempt++)
@@ -457,34 +452,34 @@ namespace Oxide.Plugins
 
         private BuildingPrivlidge GetRandomToolCupboard()
         {
-            var tcs = UnityEngine.Object.FindObjectsOfType<BuildingPrivlidge>();
+            var tcs   = UnityEngine.Object.FindObjectsOfType<BuildingPrivlidge>();
             var valid = Facepunch.Pool.Get<List<BuildingPrivlidge>>();
 
             foreach (var tc in tcs)
             {
-                // Skip server-placed TCs (OwnerID 0) and any without a position
                 if (tc != null && !tc.IsDestroyed && tc.OwnerID != 0)
                     valid.Add(tc);
             }
 
-            BuildingPrivlidge chosen = valid.Count == 0 ? null : valid[UnityEngine.Random.Range(0, valid.Count)];
+            BuildingPrivlidge chosen = valid.Count == 0
+                ? null
+                : valid[UnityEngine.Random.Range(0, valid.Count)];
+
             Facepunch.Pool.FreeUnmanaged(ref valid);
             return chosen;
         }
 
         private string GetGrid(Vector3 pos)
         {
-            float worldSize = ConVar.Server.worldsize;
-            float offset    = worldSize / 2f;
-            int   col = Mathf.Clamp(Mathf.FloorToInt((pos.x + offset) / 146.3f), 0, 25);
-            int   row = Mathf.Clamp(Mathf.FloorToInt((offset - pos.z) / 146.3f), 0, 25);
+            float offset = ConVar.Server.worldsize / 2f;
+            int col = Mathf.Clamp(Mathf.FloorToInt((pos.x + offset) / 146.3f), 0, 25);
+            int row = Mathf.Clamp(Mathf.FloorToInt((offset - pos.z) / 146.3f), 0, 25);
             return $"{(char)('A' + col)}{row}";
         }
 
         private bool HasPermission(BasePlayer player, string perm)
         {
             if (permission.UserHasPermission(player.UserIDString, perm)) return true;
-            // Fall back to auth level 2 for server owners without Oxide perms set up
             if (player.net?.connection != null && player.net.connection.authLevel >= 2) return true;
             SendReply(player, "<color=red>✖ You don't have permission to use this command.</color>");
             return false;
@@ -497,10 +492,10 @@ namespace Oxide.Plugins
         {
             switch (difficulty)
             {
-                case "easy":  return _config.Raid.EasyCount;
+                case "easy":          return _config.Raid.EasyCount;
                 case "hard":
-                case "boss":  return _config.Raid.HardCount;
-                default:      return _config.Raid.NormalCount;
+                case "boss":          return _config.Raid.HardCount;
+                default:              return _config.Raid.NormalCount;
             }
         }
     }
